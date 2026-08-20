@@ -14559,41 +14559,54 @@ async function plugin(bb) {
       description: "rewrite: removes slop. flag_only: wraps slop in \u26A0\uFE0F markers."
     }
   });
-  const { customPatterns, mode } = await settings.get();
-  const custom2 = [];
-  if (customPatterns) {
-    for (const line of customPatterns.split("\n")) {
-      const trimmed = line.trim();
-      if (trimmed && !trimmed.startsWith("#")) {
-        try {
-          custom2.push(new RegExp(trimmed, "gi"));
-        } catch {
-          bb.log.info(`[unslop] skipping invalid regex: ${trimmed}`);
+  let { customPatterns, mode } = await settings.get();
+  let custom2 = [];
+  function parseCustomPatterns() {
+    const next = [];
+    if (customPatterns) {
+      for (const line of customPatterns.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith("#")) {
+          try {
+            next.push(new RegExp(trimmed, "gi"));
+          } catch {
+            bb.log.info(`[unslop] skipping invalid regex: ${trimmed}`);
+          }
         }
       }
     }
+    custom2 = next;
   }
-  const allPatterns = [...DEFAULT_SLOP_PATTERNS, ...custom2];
+  parseCustomPatterns();
+  settings.onChange((next) => {
+    customPatterns = next.customPatterns;
+    mode = next.mode;
+    parseCustomPatterns();
+    bb.log.info(`[unslop] settings updated (mode: ${mode})`);
+  });
+  function allPatterns() {
+    return [...DEFAULT_SLOP_PATTERNS, ...custom2];
+  }
   bb.agents.registerTool({
     name: "unslop_filter",
-    description: `Strip overused AI patterns (hedging, filler, corporate affect) from text. Call this on your own output before sending it, or on text you've read. Mode: ${mode}.`,
+    description: `Strip overused AI patterns (hedging, filler, corporate affect) from text. Call this on your own output before sending it, or on text you've read. This tool only affects text you explicitly pass to it \u2014 it does not filter your output automatically. Mode: ${mode}.`,
     parameters: external_exports.object({
       text: external_exports.string().min(1).describe("The text to clean. Can be a full message, paragraph, or code comment.")
     }),
     async execute({ text }) {
       if (!text) return text;
       let cleaned = text;
+      const patterns = allPatterns();
       if (mode === "flag_only") {
-        for (const pattern of allPatterns) {
+        for (const pattern of patterns) {
           cleaned = cleaned.replace(pattern, "\u26A0\uFE0F$&\u26A0\uFE0F");
         }
       } else {
-        for (const pattern of allPatterns) {
+        for (const pattern of patterns) {
           cleaned = cleaned.replace(pattern, "");
         }
         cleaned = cleaned.replace(/  +/g, " ");
         cleaned = cleaned.replace(/\n{3,}/g, "\n\n");
-        cleaned = cleaned.replace(/^\s+/gm, (m) => m);
         cleaned = cleaned.trim();
       }
       return cleaned || "(all content was slop)";
